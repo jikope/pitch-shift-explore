@@ -1,0 +1,10 @@
+[
+  {
+    "label": "Debug native binary",
+    "program": "$ZED_WORKTREE_ROOT/build/pitch-shift",
+    "request": "launch",
+    "adapter": "CodeLLDB",
+    "build": "CMake Build Debug",
+    "cwd": "$ZED_WORKTREE_ROOT",
+  },
+]
