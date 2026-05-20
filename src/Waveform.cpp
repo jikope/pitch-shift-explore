@@ -1,14 +1,10 @@
 #include "Waveform.h"
 #include "SDL3/SDL_stdinc.h"
 #include "SDL3_mixer/SDL_mixer.h"
-#include <cmath>
-#include <cstddef>
-#include <cstdio>
-#include <jack/systemdeps.h>
-#include <numbers>
-#include <stdlib.h>
-#include <strings.h>
+#include <algorithm>
 #include <kiss_fft.h>
+#include <numbers>
+#include <vector>
 
 namespace PitchShift {
     float LinearInterpolation(float s1, float s2, float frac) {
@@ -40,7 +36,6 @@ namespace PitchShift {
 
         this->n_frames =  (10 * spec.freq);
         this->sample_count = this->n_frames * spec.channels * sample_size;
-        printf("sample_count: %ld\n", this->n_frames);
 
         this->samples = malloc(sample_count);
         int n_decoded = MIX_DecodeAudio(audioDecoder, this->samples, sample_count, &spec);
@@ -70,7 +65,85 @@ namespace PitchShift {
         return 0;
     }
 
-    void Waveform::ApplyPitchShift(int semitones) {
+    void Waveform::HarmonicPercussivePitchShift(int semitones) {
+        // A Review of Time-Scale Modification of Music Signals by Jonathan Driedger and Meinard Müller
+        // https://www.audiolabs-erlangen.de/resources/MIR/FMP/C8/C8S1_HPS.html
+        // https://dafx10.iem.at/papers/DerryFitzGerald_DAFx10_P15.pdf
+
+        int nfft = 1024;
+        int n_overlap = 4;
+        int analysis_hop_size = nfft / n_overlap;
+
+        size_t n_frames = this->n_frames / analysis_hop_size;
+
+        kiss_fft_cfg fft_cfg = kiss_fft_alloc(nfft, 0, 0, 0);
+        std::vector<std::vector<kiss_fft_cpx>> stft_l(n_frames, std::vector<kiss_fft_cpx>(nfft, { .r = 0, .i = 0 }));
+        std::vector<std::vector<kiss_fft_cpx>> stft_r(n_frames, std::vector<kiss_fft_cpx>(nfft, { .r = 0, .i = 0 }));
+
+        std::vector<kiss_fft_cpx> samples_l (nfft);
+        std::vector<kiss_fft_cpx> samples_r (nfft);
+        for (size_t f = 0; f < n_frames; f++) {
+            for (size_t n = 0; n < nfft; n++) {
+                size_t index = f * analysis_hop_size + n;
+
+                samples_l[n].r = this->samples_f32[index * 2];
+                samples_l[n].i = 0;
+                samples_r[n].r = this->samples_f32[index * 2 + 1];
+                samples_r[n].i = 0;
+            }
+            kiss_fft(fft_cfg, samples_l.data(), stft_l[f].data());
+            kiss_fft(fft_cfg, samples_r.data(), stft_r[f].data());
+        }
+
+        // Power spectrogram
+        std::vector<std::vector<float>> spectrogram_l;
+        std::vector<std::vector<float>> spectrogram_r;
+        for (size_t f = 0; f < n_frames; f++) {
+            for (size_t n = 0; n < nfft; n++) {
+                spectrogram_l[f][n] = std::powf(stft_l[f][n].r, 2);
+                spectrogram_r[f][n] = std::powf(stft_r[f][n].r, 2);
+            }
+        }
+
+        // Find median & build mask
+        int h_kernel_size = 5;
+        int p_kernel_size = 5;
+        std::vector<float> h_kernel (h_kernel_size);
+        std::vector<float> p_kernel (p_kernel_size);
+
+        std::vector<std::vector<float>> h_mask_l (n_frames);
+        std::vector<std::vector<float>> p_mask_l (n_frames);
+        // std::vector<std::vector<float>> mask_r;
+        for (size_t f = 0; f < n_frames; f++) {
+            for (size_t n = 0; n < nfft; n++) {
+                for (size_t next = 0; next < p_kernel_size; next++) {
+                    if (f + next >= n_frames)  {
+                        h_kernel[next] = 0;
+                    } else {
+                        h_kernel[next] = spectrogram_l[f + next][n];
+                    }
+
+                    if (n + next >= nfft)  {
+                        p_kernel[next] = 0;
+                    } else {
+                        p_kernel[next] = spectrogram_l[f][n + next];
+                    }
+                }
+                std::sort(h_kernel.begin(), h_kernel.end());
+                std::sort(p_kernel.begin(), p_kernel.end());
+
+                float p_median = p_kernel[2];
+                float h_median = h_kernel[2];
+
+                h_mask_l[f][n] = (h_median + (1e-10f / 2)) / (h_median + p_median + 1e-10f);
+                p_mask_l[f][n] = (p_median + (1e-10f / 2)) / (p_median + h_median + 1e-10f);
+            }
+        }
+
+        kiss_fft_free(fft_cfg);
+    }
+
+    void Waveform::PhaseVocoderPitchShift(int semitones) {
         // https://www.guitarpitchshifter.com/algorithm.html
         // https://www.youtube.com/watch?v=PjKlMXhxtTM
         // https://www.dafx.de/paper-archive/2000/pdf/Bernardini.pdf - Provides code
@@ -83,12 +156,12 @@ namespace PitchShift {
             analysis_buffer_f32[i] = 0.0f;
         }
 
-        int analysis_frame_size = 512;
-        int analysis_hop_size = 128;
-        int synthesis_frame_size = 512;
+        int nfft = 1024;
+        int analysis_frame_size = nfft;
+        int analysis_hop_size = nfft / 4;
+        int synthesis_frame_size = nfft;
         int synthesis_hop_size = std::round(analysis_hop_size * scaling_factor);
 
-        int nfft = 1024;
         kiss_fft_cfg fft_config = kiss_fft_alloc(nfft, 0, 0, 0);
 
         kiss_fft_cpx *fft_in_l = (kiss_fft_cpx*)malloc(sizeof(kiss_fft_cpx) * nfft);
@@ -98,10 +171,12 @@ namespace PitchShift {
 
         float hann_window[analysis_frame_size];
         for (int w = 0; w < analysis_frame_size; w++) {
-            hann_window[w] = 0.5f * (1.0f - std::cosf(2.0f * std::numbers::pi_v<float> * (w + 0.5f) / analysis_frame_size));
+            // hann_window[w] = 0.5f * (1.0f - std::cosf(2.0f * std::numbers::pi_v<float> * (w + 0.5f) / analysis_frame_size));
+            hann_window[w] = 0.5f * (1.0f - std::cosf(2.0f * std::numbers::pi_v<float> * w / (analysis_frame_size - 1)));
         }
 
-        int pad = nfft * 1/4;
+        // int pad = nfft * 1/4;
+        int pad = 0;
         Uint64 n_fft_frame = (Uint64)std::round(((float)this->n_frames / (float)analysis_hop_size));
         kiss_fft_cpx** analysis_fft_out_l = (kiss_fft_cpx**)malloc(n_fft_frame * sizeof(kiss_fft_cpx*));
         kiss_fft_cpx** analysis_fft_out_r = (kiss_fft_cpx**)malloc(n_fft_frame * sizeof(kiss_fft_cpx*));
@@ -137,7 +212,6 @@ namespace PitchShift {
                 analysis_fft_out_r[i][n] = fft_out_r[n];
             }
         }
-
 
         // Processing
         kiss_fft_cpx** new_complex_fft_l = (kiss_fft_cpx**)malloc(n_fft_frame * sizeof(kiss_fft_cpx*));
@@ -276,6 +350,10 @@ namespace PitchShift {
 
         kiss_fft_free(fft_config);
         kiss_fft_free(ifft_config);
+    }
+
+    int Waveform::GenerateSinewave(Uint32 sample_rate, Uint32 frequency) {
+        return 0;
     }
 
     Waveform::~Waveform() {

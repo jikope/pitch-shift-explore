@@ -1,10 +1,14 @@
 [
   {
-    "label": "Debug native binary",
+    "label": "Debugger codelldb",
     "program": "$ZED_WORKTREE_ROOT/build/pitch-shift",
     "request": "launch",
     "adapter": "CodeLLDB",
     "build": "CMake Build Debug",
     "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [
+      // "$ZED_WORKTREE_ROOT/C_Maj.ogg",
+      "$ZED_WORKTREE_ROOT/cinderella-cut.ogg",
+    ],
   },
 ]

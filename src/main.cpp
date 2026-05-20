@@ -1,16 +1,17 @@
 #include "SDL3/SDL_audio.h"
 #include "SDL3/SDL_events.h"
 #include "SDL3/SDL_render.h"
-#include "SDL3/SDL_rect.h"
 #include "SDL3/SDL_stdinc.h"
 #include "SDL3/SDL_timer.h"
 #include "SDL3_mixer/SDL_mixer.h"
 #include "Waveform.h"
+#include "WaveformVisualizer.h"
 #include <SDL3/SDL.h>
 #include <cmath>
 #include <cstring>
 #include <stdio.h>
 #include <math.h>
+#include <string_view>
 
 const int WINDOW_WIDTH = 1920;
 const int WINDOW_HEIGHT = 720;
@@ -24,8 +25,13 @@ void Draw_WaveformFull(
 );
 
 
-int main() {
+int main(int argc, const char** argv) {
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
+
+    if (argc < 2) {
+        printf("Audio file not provided. \n");
+        return 1;
+    }
 
     SDL_Window* window = SDL_CreateWindow("Pitch Shift", WINDOW_WIDTH, WINDOW_HEIGHT, 0);
     if (!window) {
@@ -52,15 +58,14 @@ int main() {
         return SDL_APP_FAILURE;
     }
 
-    // const char* path = "/media/data/Programming/pitch-shift-probe/C_Maj.ogg";
-    const char* path = "/media/data/Programming/pitch-shift-probe/cinderella-cut.ogg";
+    std::string_view path = std::string_view(argv[1]);
 
     SDL_AudioSpec spec;
     SDL_GetAudioDeviceFormat(audioDevice, &spec, NULL);
     spec.format = SDL_AUDIO_F32;
 
     PitchShift::Waveform waveform;
-    waveform.LoadFile(path, spec);
+    waveform.LoadFile(path.data(), spec);
 
     MIX_Audio* audio = MIX_LoadRawAudio(mixer, waveform.samples, waveform.sample_count, &spec);
     if (!audio) {
@@ -77,7 +82,11 @@ int main() {
 
     PitchShift::Waveform stretched_waveform;
     stretched_waveform.Copy(&waveform);
-    stretched_waveform.ApplyPitchShift(5);
+    stretched_waveform.PhaseVocoderPitchShift(3);
+
+    PitchShift::Waveform hps_waveform;
+    hps_waveform.Copy(&waveform);
+    hps_waveform.HarmonicPercussivePitchShift(3);
 
     MIX_Audio* audio2 = MIX_LoadRawAudio(mixer, stretched_waveform.samples, stretched_waveform.sample_count, &spec);
     if (!audio2) {
@@ -99,6 +108,17 @@ int main() {
     Uint64 last = SDL_GetTicks();
 
     int offset = (0.010 * spec.freq);
+
+    int longest = std::max(waveform.n_frames, stretched_waveform.n_frames);
+    PitchShift::WaveformVisualizer dry_visualizer(WINDOW_WIDTH, WINDOW_HEIGHT / 2, CENTER_Y / 2);
+    dry_visualizer.LoadWaveform(&waveform);
+    dry_visualizer.SetRenderedWaveform(400, 500);
+    // dry_visualizer.SetRenderedWaveformFull();
+
+    PitchShift::WaveformVisualizer wet_visualizer(WINDOW_WIDTH, WINDOW_HEIGHT / 2, CENTER_Y / 2 + CENTER_Y);
+    wet_visualizer.LoadWaveform(&stretched_waveform);
+    wet_visualizer.SetRenderedWaveform(400, 500);
+    // wet_visualizer.SetRenderedWaveformFull();
 
     while (!quit) {
         Uint64 now = SDL_GetTicks();
@@ -130,56 +150,16 @@ int main() {
         SDL_RenderClear(renderer);
 
         SDL_SetRenderDrawColor(renderer, 0, 100, 0, 255);
-        // Draw_Waveform(buffer_f32, buf_len_ms,renderer, 1);
 
-        int longest = std::max(waveform.n_frames, stretched_waveform.n_frames);
-        Draw_WaveformFull(&waveform, longest, renderer, CENTER_Y / 2);
-        Draw_WaveformFull(&stretched_waveform, longest, renderer, CENTER_Y / 2 + CENTER_Y);
+        dry_visualizer.DrawWaveform(renderer);
+        wet_visualizer.DrawWaveform(renderer);
 
         SDL_RenderPresent(renderer);
-        SDL_Delay(16);
+        SDL_Delay(33);
     }
-
 
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
-}
-
-
-void Draw_WaveformFull(
-    PitchShift::Waveform *waveform,
-    int buf_len_ms,
-    SDL_Renderer* renderer,
-    int y_offset = 0
-) {
-    for (int i = 0; i < WINDOW_WIDTH; i++) {
-        int s_start = i * buf_len_ms / WINDOW_WIDTH;
-        int s_end = (i + 1) * buf_len_ms / WINDOW_WIDTH;
-
-        float y_max = 0.0f;
-        float y_min = 0.0f;
-
-        if (s_start < waveform->n_frames - 1) {
-            for (int j = s_start; j < s_end; j++) {
-                y_max = fmax(y_max, waveform->samples_f32[j * 2]);
-                y_min = fmin(y_min, waveform->samples_f32[j * 2]);
-            }
-
-            if (y_max > 1.0f) {
-                y_max = 1.0f;
-            }
-            if (y_min < -1.0f) {
-                y_min = -1.0f;
-            }
-
-        }
-
-
-        SDL_RenderLine(renderer,
-            i, y_offset + (y_max * CENTER_Y),
-            i, y_offset + (y_min * CENTER_Y)
-        );
-    }
 }

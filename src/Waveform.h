@@ -10,8 +10,10 @@ namespace PitchShift {
         ~Waveform();
         int LoadFile(const char *path, SDL_AudioSpec spec);
         int Copy(const Waveform *waveform);
+        int GenerateSinewave(Uint32 sample_rate, Uint32 frequency);
 
-        void ApplyPitchShift(int semitones);
+        void HarmonicPercussivePitchShift(int semitones);
+        void PhaseVocoderPitchShift(int semitones);
 
         void* samples;
         Uint64 sample_count;

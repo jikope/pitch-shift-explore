@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(pitch-shift LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -30,7 +30,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(kissfft)
 
 
-add_executable(pitch-shift src/main.cpp src/Waveform.cpp)
+add_executable(pitch-shift src/main.cpp src/Waveform.cpp src/WaveformVisualizer.cpp)
 # target_compile_options(pitch-shift PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
 # target_link_options(pitch-shift PRIVATE -fsanitize=address)
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 SDL3_mixer::SDL3_mixer kissfft::kissfft-float)
